@@ -13,7 +13,6 @@ from typing import Any
 import click
 import feedparser
 import requests
-import yaml
 from tqdm import tqdm
 
 HATENA_ATOM_URL = "https://blog.hatena.ne.jp/{user}/{blog}/atom/entry"
@@ -113,18 +112,18 @@ def url_to_obsidian_link(
     return match.group(0)
 
 
-def make_entry_filename(entry: Any, updated: str, out_dir: Path) -> Path:
+def make_entry_filename(entry: Any, out_dir: Path) -> Path:
     permalink = getattr(entry, "link", None)
     if permalink:
         parts = permalink.rstrip("/").split("/entry/")
         if len(parts) == 2:
             slug = parts[1].replace("/", "-")
-            return out_dir / f"{updated}-{slug}.md"
+            return out_dir / f"{slug}.md"
     title = make_entry_title(entry)
-    return out_dir / f"{updated}-{title}.md"
+    return out_dir / f"{title}.md"
 
 
-def pull(conf: dict[str, Any], overwrite: bool = False) -> None:
+def pull(conf: dict[str, Any]) -> None:
     local_dir = Path(conf.get("local_dir", "posts"))
     published_dir = local_dir / "published"
     draft_dir = local_dir / "draft"
@@ -144,8 +143,6 @@ def pull(conf: dict[str, Any], overwrite: bool = False) -> None:
 
     with tqdm(total=len(entries), desc="index entries", unit="entry") as index_bar:
         for entry in entries:
-            updated_dt = datetime(*entry.updated_parsed[:6])
-            updated = updated_dt.strftime("%Y%m%d%H%M%S")
             is_draft = is_entry_draft(entry)
             if is_draft:
                 out_dir = draft_dir
@@ -153,7 +150,7 @@ def pull(conf: dict[str, Any], overwrite: bool = False) -> None:
                 out_dir = published_dir
             else:
                 out_dir = published_dir
-            filename = make_entry_filename(entry, updated, out_dir)
+            filename = make_entry_filename(entry, out_dir)
             permalink = getattr(entry, "link", None)
             title = make_entry_title(entry)
             if permalink:
@@ -168,7 +165,6 @@ def pull(conf: dict[str, Any], overwrite: bool = False) -> None:
     with tqdm(total=None, desc="pull entries", unit="entry") as progress_bar:
         for entry in entries:
             updated_dt = datetime(*entry.updated_parsed[:6])
-            updated = updated_dt.strftime("%Y%m%d%H%M%S")
             updated_iso = updated_dt.isoformat()
             is_draft = is_entry_draft(entry)
             if is_draft:
@@ -183,7 +179,7 @@ def pull(conf: dict[str, Any], overwrite: bool = False) -> None:
                 status_str = "published"
                 out_dir = published_dir
                 remote_ids = remote_ids_published
-            filename = make_entry_filename(entry, updated, out_dir)
+            filename = make_entry_filename(entry, out_dir)
             content = entry.content[0].value
 
             domain_pattern = "|".join(re.escape(d) for d in blog_domains)
@@ -223,32 +219,8 @@ def pull(conf: dict[str, Any], overwrite: bool = False) -> None:
                 f"---\n\n"
             )
             content_with_yaml = f"{yaml_front_matter}{content}"
-            need_update = overwrite
-            if not overwrite:
-                if filename.exists():
-                    text = filename.read_text(encoding="utf-8")
-                    lines = text.splitlines()
-                    if lines and lines[0].strip() == "---":
-                        try:
-                            yaml_lines = []
-                            for line in lines[1:]:
-                                if line.strip() == "---":
-                                    break
-                                yaml_lines.append(line)
-                            yaml_block = "\n".join(yaml_lines)
-                            props = yaml.safe_load(yaml_block)
-                            old_updated = props.get("updated")
-                            if old_updated:
-                                old_updated_dt = datetime.fromisoformat(
-                                    str(old_updated)
-                                )
-                                if old_updated_dt >= updated_dt:
-                                    need_update = False
-                        except Exception:
-                            pass
-            if need_update:
-                with open(filename, "w", encoding="utf-8") as f:
-                    f.write(content_with_yaml)
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(content_with_yaml)
             remote_ids.add(filename)
             progress_bar.update(1)
     for file in published_dir.glob("*.md"):
@@ -272,16 +244,10 @@ def cli() -> None:
     show_default=True,
     help="Path to configuration file",
 )
-@click.option(
-    "--overwrite/--no-overwrite",
-    default=False,
-    show_default=True,
-    help="Always overwrite local files regardless of updated date",
-)
-def sync(config_path: str, overwrite: bool) -> None:
+def sync(config_path: str) -> None:
     """Synchronize entries between local files and Hatena Blog."""
     conf = load_config(config_path)
-    pull(conf, overwrite=overwrite)
+    pull(conf)
 
 
 if __name__ == "__main__":
