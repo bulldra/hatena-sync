@@ -100,12 +100,16 @@ def url_to_obsidian_link(
     entry_url_to_title: dict[str, str],
 ) -> str:
     url = match.group("url")
+    custom_title = match.group("custom_title")
     link_path = entry_url_to_filename.get(url)
     link_title = entry_url_to_title.get(url)
-    if link_path and link_title:
-        return f"[{link_path}|{link_title}]"
-    elif link_path:
-        return f"[{link_path}]"
+    if link_path:
+        link_name = os.path.basename(link_path)
+        if custom_title:
+            return f"[{link_name}|{custom_title}]"
+        if link_title:
+            return f"[{link_name}|{link_title}]"
+        return f"[{link_name}]"
     return match.group(0)
 
 
@@ -120,7 +124,7 @@ def make_entry_filename(entry: Any, updated: str, out_dir: Path) -> Path:
     return out_dir / f"{updated}-{title}.md"
 
 
-def pull(conf: dict[str, Any]) -> None:
+def pull(conf: dict[str, Any], overwrite: bool = False) -> None:
     local_dir = Path(conf.get("local_dir", "posts"))
     published_dir = local_dir / "published"
     draft_dir = local_dir / "draft"
@@ -184,8 +188,10 @@ def pull(conf: dict[str, Any]) -> None:
 
             domain_pattern = "|".join(re.escape(d) for d in blog_domains)
             url_pattern = re.compile(
-                rf"(?P<url>https?://(?:{domain_pattern})/entry/[\w-]+)"
-                rf"(?P<embed>:embed)?(?P<title>:title)?"
+                rf"(?P<url>https?://(?:{domain_pattern})/entry/[\w\-/]+)"
+                rf"(?P<embed>:embed)?"
+                rf"(?P<title>:title)?"
+                rf"(?:=?(?P<custom_title>[^\]]+))?"
             )
             content = url_pattern.sub(
                 partial(
@@ -217,26 +223,29 @@ def pull(conf: dict[str, Any]) -> None:
                 f"---\n\n"
             )
             content_with_yaml = f"{yaml_front_matter}{content}"
-            need_update = True
-            if filename.exists():
-                text = filename.read_text(encoding="utf-8")
-                lines = text.splitlines()
-                if lines and lines[0].strip() == "---":
-                    try:
-                        yaml_lines = []
-                        for line in lines[1:]:
-                            if line.strip() == "---":
-                                break
-                            yaml_lines.append(line)
-                        yaml_block = "\n".join(yaml_lines)
-                        props = yaml.safe_load(yaml_block)
-                        old_updated = props.get("updated")
-                        if old_updated:
-                            old_updated_dt = datetime.fromisoformat(str(old_updated))
-                            if old_updated_dt >= updated_dt:
-                                need_update = False
-                    except Exception:
-                        pass
+            need_update = overwrite
+            if not overwrite:
+                if filename.exists():
+                    text = filename.read_text(encoding="utf-8")
+                    lines = text.splitlines()
+                    if lines and lines[0].strip() == "---":
+                        try:
+                            yaml_lines = []
+                            for line in lines[1:]:
+                                if line.strip() == "---":
+                                    break
+                                yaml_lines.append(line)
+                            yaml_block = "\n".join(yaml_lines)
+                            props = yaml.safe_load(yaml_block)
+                            old_updated = props.get("updated")
+                            if old_updated:
+                                old_updated_dt = datetime.fromisoformat(
+                                    str(old_updated)
+                                )
+                                if old_updated_dt >= updated_dt:
+                                    need_update = False
+                        except Exception:
+                            pass
             if need_update:
                 with open(filename, "w", encoding="utf-8") as f:
                     f.write(content_with_yaml)
@@ -264,16 +273,15 @@ def cli() -> None:
     help="Path to configuration file",
 )
 @click.option(
-    "--direction",
-    type=click.Choice(["pull"]),
-    default="pull",
+    "--overwrite/--no-overwrite",
+    default=False,
     show_default=True,
-    help="Sync direction",
+    help="Always overwrite local files regardless of updated date",
 )
-def sync(config_path: str, direction: str) -> None:
+def sync(config_path: str, overwrite: bool) -> None:
+    """Synchronize entries between local files and Hatena Blog."""
     conf = load_config(config_path)
-    if direction == "pull":
-        pull(conf)
+    pull(conf, overwrite=overwrite)
 
 
 if __name__ == "__main__":
