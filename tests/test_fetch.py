@@ -3,7 +3,9 @@ from unittest.mock import patch
 from hatena_sync import fetch_remote_entries
 
 PAGE1 = """<?xml version='1.0' encoding='utf-8'?>
-<feed xmlns='http://www.w3.org/2005/Atom'>
+<feed xmlns='http://www.w3.org/2005/Atom'
+      xmlns:openSearch='http://a9.com/-/spec/opensearch/1.1/'>
+  <openSearch:totalResults>2</openSearch:totalResults>
   <link rel='next' href='http://example.com/next'/>
   <entry>
     <id>1</id>
@@ -37,6 +39,6 @@ class Resp:
 def test_fetch_remote_entries():
     conf = {"username": "", "blog_id": "b", "api_key": "k"}
     with patch("hatena_sync.requests.get", side_effect=[Resp(PAGE1), Resp(PAGE2)]) as m:
-        entries = fetch_remote_entries(conf)
+        entries = list(fetch_remote_entries(conf))
     assert len(entries) == 2
     assert m.call_count == 2

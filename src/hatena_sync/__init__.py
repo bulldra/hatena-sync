@@ -55,11 +55,18 @@ def fetch_remote_entries(conf: dict[str, Any]):
     url: str | None = HATENA_ATOM_URL.format(user=user, blog=blog)
     headers = wsse_header(user, api_key)
     seen_ids = set()
-    with tqdm(desc="fetch entries", unit="entry") as fetch_bar:
-        while url:
-            resp = requests.get(url, headers=headers, timeout=10)
-            resp.raise_for_status()
-            feed = feedparser.parse(resp.text)
+
+    resp = requests.get(url, headers=headers, timeout=10)
+    resp.raise_for_status()
+    feed = feedparser.parse(resp.text)
+    total_str = feed.feed.get("opensearch_totalresults")
+    try:
+        total = int(total_str) if total_str is not None else None
+    except ValueError:
+        total = None
+
+    with tqdm(desc="fetch entries", unit="entry", total=total) as fetch_bar:
+        while True:
             for entry in feed.entries:
                 entry_id = getattr(entry, "id", None)
                 if entry_id and entry_id in seen_ids:
@@ -76,6 +83,9 @@ def fetch_remote_entries(conf: dict[str, Any]):
             if not feed.entries or next_url is None:
                 break
             url = next_url
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            feed = feedparser.parse(resp.text)
 
 
 def is_entry_draft(entry: Any) -> bool:
