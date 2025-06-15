@@ -97,8 +97,10 @@ def pull(conf: dict[str, Any]) -> None:
             updated = datetime(*entry.updated_parsed[:6]).strftime("%Y%m%d%H%M%S")
             title = entry.title.strip().replace("/", "_")
             filename = local_dir / f"{updated}-{title}.md"
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(entry.content[0].value)
+            content = entry.content[0].value
+            if not filename.exists() or filename.read_text(encoding="utf-8") != content:
+                with open(filename, "w", encoding="utf-8") as f:
+                    f.write(content)
             remote_ids.add(filename)
             bar.update(1)
     for file in local_dir.glob("*.md"):
