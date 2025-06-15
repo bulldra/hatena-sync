@@ -1,8 +1,4 @@
-import pathlib
-import sys
 from unittest.mock import patch
-
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from hatena_sync import fetch_remote_entries
 
@@ -39,7 +35,7 @@ class Resp:
 
 
 def test_fetch_remote_entries():
-    conf = {"username": "u", "blog_id": "b", "api_key": "k"}
+    conf = {"username": "", "blog_id": "b", "api_key": "k"}
     with patch("hatena_sync.requests.get", side_effect=[Resp(PAGE1), Resp(PAGE2)]) as m:
         entries = fetch_remote_entries(conf)
     assert len(entries) == 2
