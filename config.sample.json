@@ -1,5 +1,6 @@
 {
 	"blog_id": "example.hatenablog.com",
+	"custom_domains": ["blog.example.com"],
 	"username": "your-name",
 	"api_key": "your-api-key",
 	"local_dir": "posts"

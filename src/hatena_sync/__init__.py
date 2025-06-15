@@ -4,13 +4,16 @@ import base64
 import hashlib
 import json
 import os
+import re
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 import click
 import feedparser
 import requests
+import yaml
 from tqdm import tqdm
 
 HATENA_ATOM_URL = "https://blog.hatena.ne.jp/{user}/{blog}/atom/entry"
@@ -45,72 +48,206 @@ def wsse_header(username: str, api_key: str) -> dict[str, str]:
     return {"X-WSSE": wsse}
 
 
-def iter_remote_entries(conf: dict[str, Any]):
+def fetch_remote_entries(conf: dict[str, Any]):
     user = conf["username"]
     blog = conf["blog_id"]
     api_key = conf["api_key"]
     url: str | None = HATENA_ATOM_URL.format(user=user, blog=blog)
     headers = wsse_header(user, api_key)
     seen_ids = set()
-    while url:
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        feed = feedparser.parse(resp.text)
-        for entry in feed.entries:
-            entry_id = getattr(entry, "id", None)
-            # 下書き判定: hatena:unlisted, app:control, app:draft など
-            is_draft = False
-            if hasattr(entry, "hatena_unlisted") and entry.hatena_unlisted == "yes":
-                is_draft = True
-            if hasattr(entry, "app_draft") and entry.app_draft == "yes":
-                is_draft = True
-            if (
-                hasattr(entry, "app_control")
-                and hasattr(entry.app_control, "draft")
-                and entry.app_control.draft == "yes"
-            ):
-                is_draft = True
-            if is_draft:
-                continue
-            if entry_id and entry_id in seen_ids:
-                continue
-            if entry_id:
-                seen_ids.add(entry_id)
-
-            yield entry
-        next_url = None
-        for link in feed.feed.get("links", []):
-            if link.get("rel") == "next":
-                next_url = link.get("href")
+    with tqdm(desc="fetch entries", unit="entry") as fetch_bar:
+        while url:
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            feed = feedparser.parse(resp.text)
+            for entry in feed.entries:
+                entry_id = getattr(entry, "id", None)
+                if entry_id and entry_id in seen_ids:
+                    continue
+                if entry_id:
+                    seen_ids.add(entry_id)
+                fetch_bar.update(1)
+                yield entry
+            next_url = None
+            for link in feed.feed.get("links", []):
+                if link.get("rel") == "next":
+                    next_url = link.get("href")
+                    break
+            if not feed.entries or next_url is None:
                 break
-        if not feed.entries or next_url is None:
-            break
-        url = next_url  # type: ignore
+            url = next_url
+
+
+def is_entry_draft(entry: Any) -> bool:
+    if hasattr(entry, "app_draft") and entry.app_draft == "yes":
+        return True
+    if (
+        hasattr(entry, "app_control")
+        and hasattr(entry.app_control, "draft")
+        and entry.app_control.draft == "yes"
+    ):
+        return True
+    return False
+
+
+def make_entry_title(entry: Any) -> str:
+    return entry.title.strip().replace("/", "_")
+
+
+def url_to_obsidian_link(
+    match: re.Match,
+    entry_url_to_filename: dict[str, str],
+    entry_url_to_title: dict[str, str],
+) -> str:
+    url = match.group("url")
+    link_path = entry_url_to_filename.get(url)
+    link_title = entry_url_to_title.get(url)
+    if link_path and link_title:
+        return f"[{link_path}|{link_title}]"
+    elif link_path:
+        return f"[{link_path}]"
+    return match.group(0)
+
+
+def make_entry_filename(entry: Any, updated: str, out_dir: Path) -> Path:
+    permalink = getattr(entry, "link", None)
+    if permalink:
+        parts = permalink.rstrip("/").split("/entry/")
+        if len(parts) == 2:
+            slug = parts[1].replace("/", "-")
+            return out_dir / f"{updated}-{slug}.md"
+    title = make_entry_title(entry)
+    return out_dir / f"{updated}-{title}.md"
 
 
 def pull(conf: dict[str, Any]) -> None:
     local_dir = Path(conf.get("local_dir", "posts"))
-    local_dir.mkdir(parents=True, exist_ok=True)
-    remote_ids = set()
-    with tqdm(total=None, desc="pull entries", unit="entry") as bar:
-        for entry in iter_remote_entries(conf):
-            updated = datetime(*entry.updated_parsed[:6]).strftime("%Y%m%d%H%M%S")
-            title = entry.title.strip().replace("/", "_")
-            filename = local_dir / f"{updated}-{title}.md"
+    published_dir = local_dir / "published"
+    draft_dir = local_dir / "draft"
+    published_dir.mkdir(parents=True, exist_ok=True)
+    draft_dir.mkdir(parents=True, exist_ok=True)
+    remote_ids_published: set[Path] = set()
+    remote_ids_draft: set[Path] = set()
+    custom_domains = conf.get("custom_domains", [])
+    blog_domains = [
+        d.replace("https://", "").replace("http://", "").rstrip("/")
+        for d in custom_domains
+    ]
+
+    entry_url_to_filename: dict[str, str] = {}
+    entry_url_to_title: dict[str, str] = {}
+    entries = list(fetch_remote_entries(conf))
+
+    with tqdm(total=len(entries), desc="index entries", unit="entry") as index_bar:
+        for entry in entries:
+            updated_dt = datetime(*entry.updated_parsed[:6])
+            updated = updated_dt.strftime("%Y%m%d%H%M%S")
+            is_draft = is_entry_draft(entry)
+            if is_draft:
+                out_dir = draft_dir
+            elif hasattr(entry, "hatena_unlisted") and entry.hatena_unlisted == "yes":
+                out_dir = published_dir
+            else:
+                out_dir = published_dir
+            filename = make_entry_filename(entry, updated, out_dir)
+            permalink = getattr(entry, "link", None)
+            title = make_entry_title(entry)
+            if permalink:
+                entry_url_to_filename[permalink] = os.path.basename(str(filename))
+                entry_url_to_title[permalink] = title
+            entry_id = getattr(entry, "id", None)
+            if entry_id and entry_id.startswith("http"):
+                entry_url_to_filename[entry_id] = os.path.basename(str(filename))
+                entry_url_to_title[entry_id] = title
+            index_bar.update(1)
+
+    with tqdm(total=None, desc="pull entries", unit="entry") as progress_bar:
+        for entry in entries:
+            updated_dt = datetime(*entry.updated_parsed[:6])
+            updated = updated_dt.strftime("%Y%m%d%H%M%S")
+            updated_iso = updated_dt.isoformat()
+            is_draft = is_entry_draft(entry)
+            if is_draft:
+                status_str = "draft"
+                out_dir = draft_dir
+                remote_ids = remote_ids_draft
+            elif hasattr(entry, "hatena_unlisted") and entry.hatena_unlisted == "yes":
+                status_str = "unlisted"
+                out_dir = published_dir
+                remote_ids = remote_ids_published
+            else:
+                status_str = "published"
+                out_dir = published_dir
+                remote_ids = remote_ids_published
+            filename = make_entry_filename(entry, updated, out_dir)
             content = entry.content[0].value
-            if not filename.exists() or filename.read_text(encoding="utf-8") != content:
+
+            domain_pattern = "|".join(re.escape(d) for d in blog_domains)
+            url_pattern = re.compile(
+                rf"(?P<url>https?://(?:{domain_pattern})/entry/[\w-]+)"
+                rf"(?P<embed>:embed)?(?P<title>:title)?"
+            )
+            content = url_pattern.sub(
+                partial(
+                    url_to_obsidian_link,
+                    entry_url_to_filename=entry_url_to_filename,
+                    entry_url_to_title=entry_url_to_title,
+                ),
+                content,
+            )
+            if hasattr(entry, "published_parsed"):
+                date_str = datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d")
+            else:
+                date_str = updated_dt.strftime("%Y-%m-%d")
+            tags = [t["term"] for t in getattr(entry, "tags", []) if "term" in t]
+            category = getattr(entry, "category", None)
+            permalink = getattr(entry, "link", None)
+            id_ = getattr(entry, "id", None)
+            title = make_entry_title(entry)
+            yaml_front_matter = (
+                f"---\n"
+                f'title: "{title}"\n'
+                f"date: {date_str}\n"
+                f"updated: {updated_iso}\n"
+                f"tags: {tags}\n"
+                f"status: {status_str}\n"
+                f"category: {category if category else ''}\n"
+                f"permalink: {permalink if permalink else ''}\n"
+                f"id: {id_ if id_ else ''}\n"
+                f"---\n\n"
+            )
+            content_with_yaml = f"{yaml_front_matter}{content}"
+            need_update = True
+            if filename.exists():
+                text = filename.read_text(encoding="utf-8")
+                lines = text.splitlines()
+                if lines and lines[0].strip() == "---":
+                    try:
+                        yaml_lines = []
+                        for line in lines[1:]:
+                            if line.strip() == "---":
+                                break
+                            yaml_lines.append(line)
+                        yaml_block = "\n".join(yaml_lines)
+                        props = yaml.safe_load(yaml_block)
+                        old_updated = props.get("updated")
+                        if old_updated:
+                            old_updated_dt = datetime.fromisoformat(str(old_updated))
+                            if old_updated_dt >= updated_dt:
+                                need_update = False
+                    except Exception:
+                        pass
+            if need_update:
                 with open(filename, "w", encoding="utf-8") as f:
-                    f.write(content)
+                    f.write(content_with_yaml)
             remote_ids.add(filename)
-            bar.update(1)
-    for file in local_dir.glob("*.md"):
-        if file not in remote_ids:
+            progress_bar.update(1)
+    for file in published_dir.glob("*.md"):
+        if file not in remote_ids_published:
             file.unlink()
-
-
-def push(conf: dict[str, Any]) -> None:
-    """Placeholder for pushing local changes back to Hatena Blog."""
-    click.echo("push is not implemented yet")
+    for file in draft_dir.glob("*.md"):
+        if file not in remote_ids_draft:
+            file.unlink()
 
 
 @click.group()
@@ -128,18 +265,15 @@ def cli() -> None:
 )
 @click.option(
     "--direction",
-    type=click.Choice(["pull", "push", "both"]),
-    default="both",
+    type=click.Choice(["pull"]),
+    default="pull",
     show_default=True,
     help="Sync direction",
 )
 def sync(config_path: str, direction: str) -> None:
-    """Synchronize entries between local files and Hatena Blog."""
     conf = load_config(config_path)
-    if direction in ("pull", "both"):
+    if direction == "pull":
         pull(conf)
-    if direction in ("push", "both"):
-        push(conf)
 
 
 if __name__ == "__main__":
