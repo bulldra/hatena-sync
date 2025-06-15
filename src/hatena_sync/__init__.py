@@ -51,10 +51,11 @@ def fetch_remote_entries(conf: dict[str, Any]):
     user = conf["username"]
     blog = conf["blog_id"]
     api_key = conf["api_key"]
-    url: str | None = HATENA_ATOM_URL.format(user=user, blog=blog)
+    url: str = HATENA_ATOM_URL.format(user=user, blog=blog)
     headers = wsse_header(user, api_key)
     seen_ids = set()
-    with tqdm(desc="fetch entries", unit="entry") as fetch_bar:
+
+    with tqdm(total=None, desc="fetch entries", unit="entry") as fetch_bar:
         while url:
             resp = requests.get(url, headers=headers, timeout=10)
             resp.raise_for_status()
@@ -140,8 +141,9 @@ def pull(conf: dict[str, Any]) -> None:
     entry_url_to_filename: dict[str, str] = {}
     entry_url_to_title: dict[str, str] = {}
     entries = list(fetch_remote_entries(conf))
+    total_entries = len(entries)
 
-    with tqdm(total=len(entries), desc="index entries", unit="entry") as index_bar:
+    with tqdm(total=total_entries, desc="index entries", unit="entry") as index_bar:
         for entry in entries:
             is_draft = is_entry_draft(entry)
             if is_draft:
@@ -162,7 +164,7 @@ def pull(conf: dict[str, Any]) -> None:
                 entry_url_to_title[entry_id] = title
             index_bar.update(1)
 
-    with tqdm(total=None, desc="pull entries", unit="entry") as progress_bar:
+    with tqdm(total=total_entries, desc="pull entries", unit="entry") as progress_bar:
         for entry in entries:
             updated_dt = datetime(*entry.updated_parsed[:6])
             updated_iso = updated_dt.isoformat()
