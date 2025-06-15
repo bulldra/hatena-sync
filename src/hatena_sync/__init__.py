@@ -13,6 +13,8 @@ from typing import Any
 import click
 import feedparser
 import requests
+
+from .converters import hatena_to_markdown
 from tqdm import tqdm
 
 HATENA_ATOM_URL = "https://blog.hatena.ne.jp/{user}/{blog}/atom/entry"
@@ -87,6 +89,22 @@ def is_entry_draft(entry: Any) -> bool:
         and entry.app_control.draft == "yes"
     ):
         return True
+    return False
+
+
+def is_markdown_entry(entry: Any) -> bool:
+    """Return True if the entry is in Markdown format.
+
+    Checks both the ``hatena_syntax`` element and the ``type`` attribute of the
+    first ``content`` block because older entries may not include the
+    ``hatena:syntax`` extension.
+    """
+    syntax = getattr(entry, "hatena_syntax", "").lower()
+    if syntax:
+        return syntax == "markdown"
+    if hasattr(entry, "content") and entry.content:
+        ctype = entry.content[0].get("type", "").lower()
+        return "markdown" in ctype
     return False
 
 
@@ -199,6 +217,9 @@ def pull(conf: dict[str, Any]) -> None:
                 ),
                 content,
             )
+
+            if not is_markdown_entry(entry):
+                content = hatena_to_markdown(content)
             if hasattr(entry, "published_parsed"):
                 date_str = datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d")
             else:

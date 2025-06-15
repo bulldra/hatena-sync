@@ -37,6 +37,6 @@ class Resp:
 def test_fetch_remote_entries():
     conf = {"username": "", "blog_id": "b", "api_key": "k"}
     with patch("hatena_sync.requests.get", side_effect=[Resp(PAGE1), Resp(PAGE2)]) as m:
-        entries = fetch_remote_entries(conf)
+        entries = list(fetch_remote_entries(conf))
     assert len(entries) == 2
     assert m.call_count == 2
