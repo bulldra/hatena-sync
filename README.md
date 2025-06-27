@@ -20,7 +20,7 @@ A command-line tool for synchronizing Hatena Blog entries with local Markdown fi
     ```
 3. Run the sync command:
     ```bash
-    hatena-sync sync
+    hatena-sync
     ```
 
 ## Configuration

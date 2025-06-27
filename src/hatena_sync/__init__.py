@@ -254,20 +254,17 @@ def pull(conf: dict[str, Any]) -> None:
             file.unlink()
 
 
-@click.group()
+@click.group(invoke_without_command=True)
 def cli() -> None:
-    pass
+    # サブコマンドなしで呼ばれた場合はsyncを実行
+    import sys
+
+    if not sys.argv[1:]:
+        sync()
 
 
-@cli.command()
-@click.option(
-    "--config",
-    "config_path",
-    default="config.json",
-    show_default=True,
-    help="Path to configuration file",
-)
-def sync(config_path: str) -> None:
+@cli.command(context_settings={"ignore_unknown_options": True})
+def sync(config_path: str = "config.json") -> None:
     """Synchronize entries between local files and Hatena Blog."""
     conf = load_config(config_path)
     pull(conf)
