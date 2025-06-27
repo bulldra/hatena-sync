@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
@@ -21,6 +22,10 @@ HATENA_ATOM_URL = "https://blog.hatena.ne.jp/{user}/{blog}/atom/entry"
 
 
 def load_config(path: str) -> dict[str, Any]:
+    if not os.path.exists(path):
+        raise click.ClickException(
+            f"設定ファイル '{path}' が見つかりません。config.sample.json をコピーして作成してください。"
+        )
     with open(path, "r", encoding="utf-8") as fh:
         conf = json.load(fh)
     required = {"username", "blog_id", "api_key"}
@@ -257,8 +262,6 @@ def pull(conf: dict[str, Any]) -> None:
 @click.group(invoke_without_command=True)
 def cli() -> None:
     # サブコマンドなしで呼ばれた場合はsyncを実行
-    import sys
-
     if not sys.argv[1:]:
         sync()
 
