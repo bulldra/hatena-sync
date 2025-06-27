@@ -7,3 +7,4 @@
 -   Code formatting is required (black).
 -   88 character line length.
 -   Use `uv` for package management.
+-

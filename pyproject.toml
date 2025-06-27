@@ -1,20 +1,22 @@
 [project]
 name = "hatena-sync"
 version = "0.1.0"
-description = "Add your description here"
+description = "Hatena BlogとローカルMarkdownの双方向同期CLIツール"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
     "click>=8.2.1",
     "feedparser>=6.0.11",
-    "html2text>=2025.4.15",
-    "pytest>=8.4.0",
-    "pyyaml>=6.0.2",
     "requests>=2.32.4",
     "tqdm>=4.67.1",
+    "pytest>=8.4.0",
+    "pyyaml>=6.0.2",
     "types-pyyaml>=6.0.12.20250516",
     "types-requests>=2.32.0.20250602",
 ]
+
+[project.scripts]
+hatena-sync = "hatena_sync.__init__:cli"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
