@@ -5,11 +5,11 @@ import hashlib
 import json
 import os
 import re
-import sys
+from collections.abc import Generator
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import click
 import feedparser
@@ -21,10 +21,19 @@ from hatena_sync.converters import hatena_to_markdown
 HATENA_ATOM_URL = "https://blog.hatena.ne.jp/{user}/{blog}/atom/entry"
 
 
+class EntryInfo(NamedTuple):
+    """エントリの状態と出力先を保持する"""
+
+    status: str
+    out_dir: Path
+    remote_ids: set[Path]
+
+
 def load_config(path: str) -> dict[str, Any]:
     if not os.path.exists(path):
         raise click.ClickException(
-            f"設定ファイル '{path}' が見つかりません。config.sample.json をコピーして作成してください。"
+            f"設定ファイル '{path}' が見つかりません。"
+            "config.sample.json をコピーして作成してください。"
         )
     with open(path, "r", encoding="utf-8") as fh:
         conf = json.load(fh)
@@ -41,7 +50,8 @@ def wsse_header(username: str, api_key: str) -> dict[str, str]:
     nonce = os.urandom(16)
     created = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     digest = hashlib.sha1(
-        nonce + created.encode("utf-8") + api_key.encode("utf-8")
+        nonce + created.encode("utf-8") + api_key.encode("utf-8"),
+        usedforsecurity=False,
     ).digest()
     password_digest = base64.b64encode(digest).decode("utf-8")
     nonce_b64 = base64.b64encode(nonce).decode("utf-8")
@@ -54,7 +64,7 @@ def wsse_header(username: str, api_key: str) -> dict[str, str]:
     return {"X-WSSE": wsse}
 
 
-def fetch_remote_entries(conf: dict[str, Any]):
+def fetch_remote_entries(conf: dict[str, Any]) -> Generator[Any, None, None]:
     user = conf["username"]
     blog = conf["blog_id"]
     api_key = conf["api_key"]
@@ -105,6 +115,32 @@ def is_markdown_entry(entry: Any) -> bool:
         ctype = entry.content[0].get("type", "").lower()
         return "markdown" in ctype
     return False
+
+
+def get_entry_info(
+    entry: Any,
+    published_dir: Path,
+    draft_dir: Path,
+    remote_ids_published: set[Path],
+    remote_ids_draft: set[Path],
+) -> EntryInfo:
+    """エントリの状態と出力先を判定する"""
+    if is_entry_draft(entry):
+        return EntryInfo("draft", draft_dir, remote_ids_draft)
+    if hasattr(entry, "hatena_unlisted") and entry.hatena_unlisted == "yes":
+        return EntryInfo("unlisted", published_dir, remote_ids_published)
+    return EntryInfo("published", published_dir, remote_ids_published)
+
+
+def build_url_pattern(blog_domains: list[str]) -> re.Pattern[str]:
+    """ブログURLマッチング用の正規表現を構築する"""
+    domain_pattern = "|".join(re.escape(d) for d in blog_domains)
+    return re.compile(
+        rf"(?P<url>https?://(?:{domain_pattern})/entry/[\w\-/]+)"
+        rf"(?P<embed>:embed)?"
+        rf"(?P<title>:title)?"
+        rf"(?:=?(?P<custom_title>[^\]]+))?"
+    )
 
 
 def make_entry_title(entry: Any) -> str:
@@ -160,6 +196,7 @@ def pull(conf: dict[str, Any]) -> None:
     entries = list(fetch_remote_entries(conf))
     total_entries = len(entries)
 
+    # はてな記法をMarkdownに変換
     with tqdm(
         total=total_entries, desc="hatena-syntax-to-md entries", unit="entry"
     ) as count_bar:
@@ -168,16 +205,13 @@ def pull(conf: dict[str, Any]) -> None:
                 entry.content[0].value = hatena_to_markdown(entry.content[0].value)
             count_bar.update(1)
 
+    # URLマッピング用インデックスを構築
     with tqdm(total=total_entries, desc="index entries", unit="entry") as index_bar:
         for entry in entries:
-            is_draft = is_entry_draft(entry)
-            if is_draft:
-                out_dir = draft_dir
-            elif hasattr(entry, "hatena_unlisted") and entry.hatena_unlisted == "yes":
-                out_dir = published_dir
-            else:
-                out_dir = published_dir
-            filename = make_entry_filename(entry, out_dir)
+            info = get_entry_info(
+                entry, published_dir, draft_dir, remote_ids_published, remote_ids_draft
+            )
+            filename = make_entry_filename(entry, info.out_dir)
             permalink = getattr(entry, "link", None)
             title = make_entry_title(entry)
             if permalink:
@@ -189,41 +223,29 @@ def pull(conf: dict[str, Any]) -> None:
                 entry_url_to_title[entry_id] = title
             index_bar.update(1)
 
+    # 正規表現を事前コンパイル
+    url_pattern = build_url_pattern(blog_domains) if blog_domains else None
+
+    # エントリをファイルに書き出し
     with tqdm(total=total_entries, desc="pull entries", unit="entry") as progress_bar:
         for entry in entries:
             updated_dt = datetime(*entry.updated_parsed[:6])
             updated_iso = updated_dt.isoformat()
-            is_draft = is_entry_draft(entry)
-            if is_draft:
-                status_str = "draft"
-                out_dir = draft_dir
-                remote_ids = remote_ids_draft
-            elif hasattr(entry, "hatena_unlisted") and entry.hatena_unlisted == "yes":
-                status_str = "unlisted"
-                out_dir = published_dir
-                remote_ids = remote_ids_published
-            else:
-                status_str = "published"
-                out_dir = published_dir
-                remote_ids = remote_ids_published
-            filename = make_entry_filename(entry, out_dir)
+            info = get_entry_info(
+                entry, published_dir, draft_dir, remote_ids_published, remote_ids_draft
+            )
+            filename = make_entry_filename(entry, info.out_dir)
             content = entry.content[0].value
 
-            domain_pattern = "|".join(re.escape(d) for d in blog_domains)
-            url_pattern = re.compile(
-                rf"(?P<url>https?://(?:{domain_pattern})/entry/[\w\-/]+)"
-                rf"(?P<embed>:embed)?"
-                rf"(?P<title>:title)?"
-                rf"(?:=?(?P<custom_title>[^\]]+))?"
-            )
-            content = url_pattern.sub(
-                partial(
-                    url_to_obsidian_link,
-                    entry_url_to_filename=entry_url_to_filename,
-                    entry_url_to_title=entry_url_to_title,
-                ),
-                content,
-            )
+            if url_pattern:
+                content = url_pattern.sub(
+                    partial(
+                        url_to_obsidian_link,
+                        entry_url_to_filename=entry_url_to_filename,
+                        entry_url_to_title=entry_url_to_title,
+                    ),
+                    content,
+                )
 
             if hasattr(entry, "published_parsed"):
                 date_str = datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d")
@@ -240,7 +262,7 @@ def pull(conf: dict[str, Any]) -> None:
                 f"date: {date_str}\n"
                 f"updated: {updated_iso}\n"
                 f"tags: {tags}\n"
-                f"status: {status_str}\n"
+                f"status: {info.status}\n"
                 f"category: {category if category else ''}\n"
                 f"permalink: {permalink if permalink else ''}\n"
                 f"id: {id_ if id_ else ''}\n"
@@ -249,8 +271,10 @@ def pull(conf: dict[str, Any]) -> None:
             content_with_yaml = f"{yaml_front_matter}{content}"
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(content_with_yaml)
-            remote_ids.add(filename)
+            info.remote_ids.add(filename)
             progress_bar.update(1)
+
+    # リモートにないファイルを削除
     for file in published_dir.glob("*.md"):
         if file not in remote_ids_published:
             file.unlink()
@@ -260,16 +284,24 @@ def pull(conf: dict[str, Any]) -> None:
 
 
 @click.group(invoke_without_command=True)
-def cli() -> None:
-    # サブコマンドなしで呼ばれた場合はsyncを実行
-    if not sys.argv[1:]:
-        sync()
+@click.pass_context
+def cli(ctx: click.Context) -> None:
+    """Hatena BlogとローカルMarkdownの同期CLIツール"""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(sync)
 
 
-@cli.command(context_settings={"ignore_unknown_options": True})
-def sync(config_path: str = "config.json") -> None:
-    """Synchronize entries between local files and Hatena Blog."""
-    conf = load_config(config_path)
+@cli.command()
+@click.option(
+    "--config",
+    "-c",
+    default="config.json",
+    help="設定ファイルのパス",
+    type=click.Path(exists=False),
+)
+def sync(config: str) -> None:
+    """エントリをHatena Blogからローカルに同期する"""
+    conf = load_config(config)
     pull(conf)
 
 

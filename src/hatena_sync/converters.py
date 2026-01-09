@@ -1,8 +1,9 @@
+from __future__ import annotations
+
 import re
 
 
 def hatena_to_markdown(text: str) -> str:
-
     def convert_heading(line: str) -> str:
         # *見出し → ##, **見出し → ###, ...
         match = re.match(r"^(\*+)(.+)", line)
@@ -68,10 +69,7 @@ def hatena_to_markdown(text: str) -> str:
                 in_code = False
                 result.append("```")
                 continue
-            if in_code:
-                result.append(line)
-            else:
-                result.append(line)
+            result.append(line)
         return result
 
     def convert_definition_list(line: str) -> str:
@@ -80,11 +78,6 @@ def hatena_to_markdown(text: str) -> str:
             term = match.group(1).strip()
             definition = match.group(2).strip()
             return f"<dl><dt>{term}</dt><dd>{definition}</dd></dl>"
-        return line
-
-    def convert_table(line: str) -> str:
-        if re.match(r"^\|.*\|$", line):
-            return line
         return line
 
     def convert_blockquote(line: str) -> str:
@@ -171,7 +164,6 @@ def hatena_to_markdown(text: str) -> str:
         line = convert_url_embed(line)
         line = convert_image(line)
         line = convert_definition_list(line)
-        line = convert_table(line)
         line = convert_blockquote(line)
         line = convert_pre(line)
         line = convert_footnote(line)

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "case \"$CLAUDE_FILE_PATHS\" in *.py) uv run ruff check --fix \"$CLAUDE_FILE_PATHS\" && uv run ruff format \"$CLAUDE_FILE_PATHS\" ;; esac"
+          }
+        ]
+      }
+    ]
+  }
+}

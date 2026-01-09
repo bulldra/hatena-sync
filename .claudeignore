@@ -1,0 +1,88 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Data files
+backend/data/
+data/
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Images and media
+backend/data/images/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ico
+*.svg
+*.webp
+
+# Lock files (can be large)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+uv.lock
+
+# Frontend build
+frontend/dist/
+frontend/build/
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Migration history (keep migration scripts, exclude data)
+backend/migrations/*.json
+
+# Test files (optional - uncomment if you want to exclude tests)
+# **/test_*.py
+# **/*.test.ts
+# **/*.test.tsx
+# **/*.spec.ts
+# **/*.spec.tsx
+
+# Documentation (optional - uncomment if docs are large)
+# docs/*.pdf

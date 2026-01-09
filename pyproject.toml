@@ -9,15 +9,40 @@ dependencies = [
     "feedparser>=6.0.11",
     "requests>=2.32.4",
     "tqdm>=4.67.1",
+]
+
+[project.optional-dependencies]
+dev = [
     "pytest>=8.4.0",
-    "pyyaml>=6.0.2",
-    "types-pyyaml>=6.0.12.20250516",
+    "ruff>=0.8.0",
     "types-requests>=2.32.0.20250602",
 ]
 
 [project.scripts]
 hatena-sync = "hatena_sync.__init__:cli"
 
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+package = true
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore:.*swig.*:DeprecationWarning",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
