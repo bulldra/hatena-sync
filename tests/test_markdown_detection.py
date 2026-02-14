@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+
 from hatena_sync import is_markdown_entry
 
 

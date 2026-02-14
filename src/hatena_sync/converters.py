@@ -1,6 +1,105 @@
 from __future__ import annotations
 
+import os
 import re
+from pathlib import Path
+
+
+def build_asin_to_kindle_map(kindle_dir: Path) -> dict[str, str]:
+    """kindle_highlightディレクトリからASIN->ファイル名マッピングを構築する
+
+    YAMLフロントマターから kindle-sync.asin を読み取る
+    """
+    asin_to_filename: dict[str, str] = {}
+    if not kindle_dir.exists():
+        return asin_to_filename
+
+    for file in kindle_dir.glob("*.md"):
+        try:
+            with open(file, "r", encoding="utf-8") as f:
+                content = f.read(2000)  # フロントマター部分だけ読む
+            if not content.startswith("---"):
+                continue
+            # YAMLフロントマターからasinを抽出
+            parts = content.split("---", 2)
+            if len(parts) < 3:
+                continue
+            yaml_part = parts[1]
+            # asin: の行を探す
+            for line in yaml_part.split("\n"):
+                line = line.strip()
+                if line.startswith("asin:"):
+                    asin = line.split(":", 1)[1].strip()
+                    if asin:
+                        asin_to_filename[asin] = file.name
+                    break
+        except (OSError, UnicodeDecodeError):
+            continue
+    return asin_to_filename
+
+
+def asin_to_kindle_link(content: str, asin_to_filename: dict[str, str]) -> str:
+    """[asin:ASIN:xxx] をKindleハイライトへのObsidianリンクに置換する
+
+    例: [asin:B0G13D2JS4:detail] -> [[書籍タイトル]]
+    """
+
+    def replace_asin(match: re.Match) -> str:
+        full_match = match.group(0)
+        asin = match.group(1)
+        filename = asin_to_filename.get(asin)
+        if filename:
+            # 拡張子を除いたファイル名でObsidianリンクに置換
+            link_name = os.path.splitext(filename)[0]
+            return f"『[[{link_name}]]』"
+        return full_match
+
+    # [asin:ASIN:xxx] パターンにマッチ
+    content = re.sub(
+        r"\[asin:([A-Z0-9]+):[^\]]+\]",
+        replace_asin,
+        content,
+    )
+    return content
+
+
+def obsidian_to_hatena_link(content: str, filename_to_url: dict[str, str]) -> str:
+    """Obsidian内部リンクをHatena Blog URLに変換する
+
+    [[filename|title]] または [[filename]] 形式のリンクを
+    [title](url) または [filename](url) 形式に変換する
+    """
+
+    def replace_link(match: re.Match) -> str:
+        full_match = match.group(0)
+        filename = match.group(1)
+        custom_title = match.group(2) if match.lastindex >= 2 else None
+
+        # .mdがない場合は追加
+        if not filename.endswith(".md"):
+            filename_with_ext = f"{filename}.md"
+        else:
+            filename_with_ext = filename
+
+        url = filename_to_url.get(filename_with_ext)
+        if url:
+            display_text = custom_title if custom_title else filename
+            return f"[{display_text}]({url})"
+        return full_match
+
+    # [[filename|title]] 形式
+    content = re.sub(
+        r"\[\[([^\]|]+)\|([^\]]+)\]\]",
+        replace_link,
+        content,
+    )
+    # [[filename]] 形式
+    content = re.sub(
+        r"\[\[([^\]]+)\]\]",
+        replace_link,
+        content,
+    )
+    return content
 
 
 def hatena_to_markdown(text: str) -> str:

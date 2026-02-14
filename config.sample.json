@@ -3,5 +3,6 @@
 	"custom_domains": ["blog.example.com"],
 	"username": "your-name",
 	"api_key": "your-api-key",
-	"local_dir": "posts"
+	"local_dir": "posts",
+	"kindle_highlight_dir": "/path/to/kindle_highlight"
 }
